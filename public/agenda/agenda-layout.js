@@ -129,7 +129,7 @@ function renderTimePanel(m,t){
  const panel=document.querySelector('#timePanel');if(!panel)return;
  const rows=TIME_FIELDS.map(([k,l])=>'<label class="time-control" data-control-key="'+k+'"><b>'+l+'</b><input type="number" min="0" step="1" value="'+m.timeSettings[k]+'" data-key="'+k+'" oninput="updateTime(this)"></label>').join('');
  const warnings=timeWarnings(m,t);
- const open=m.timePanelOpen??!matchMedia('(max-width:900px)').matches;
+ const open=m.timePanelOpen??true;
  panel.innerHTML='<details '+(open?'open':'')+' ontoggle="rememberTimePanel(this)"><summary>時間控制器 <small>分鐘</small></summary><div class="start-anchor"><b>固定起點</b><strong>6:45</strong></div><div class="time-help">修改紅字，後面所有時間會立即重算</div>'+rows+'<div class="time-warnings">'+warnings.map(x=>'<div>⚠ '+x+'</div>').join('')+'</div></details>';
  observeAgendaAlignment();
 }
@@ -150,12 +150,10 @@ function observeAgendaAlignment(){
 function syncTimeControlAlignment(){
  const sheet=document.querySelector('#sheet'),panel=document.querySelector('#timePanel');
  if(!sheet||!panel)return;
- const mobile=matchMedia('(max-width:900px)').matches;
- panel.classList.toggle('session-aligned',!mobile);
- panel.style.height=mobile?'':sheet.offsetHeight+'px';
+ panel.classList.add('session-aligned');
+ panel.style.height=sheet.offsetHeight+'px';
  panel.querySelectorAll('.time-control').forEach(control=>{
   control.style.top='';control.style.height='';
-  if(mobile)return;
   const target=sheet.querySelector('[data-session="'+control.dataset.controlKey+'"]');
   if(!target)return;
   const sr=sheet.getBoundingClientRect(),tr=target.getBoundingClientRect();
