@@ -19,7 +19,7 @@ const ROLE_FIELDS=[
  ['evaluatorOfEvaluator','Evaluator of Evaluator'],['evaluatorOfTopicsmaster','Evaluator of Topicsmaster']
 ];
 const ROLE_LABELS={receptionist:'Receptionist',saa:'SAA',president:'President',tme:'Toastmaster',timer:'Timer',ahCounter:'Ah counter',varietyMaster:'Variety Master',topicsmaster:'Topicsmaster',ge:'General Evaluator',grammarian:'Grammarian'};
-let project,activeIndex=0,undoStack=[],redoStack=[],continuousSnapshot='',pendingRestore=null,saveTimer=null,resizeObserver=null,dialogResolve=null;
+let project,activeIndex=0,undoStack=[],redoStack=[],continuousSnapshot='',pendingRestore=null,saveTimer=null,resizeObserver=null,dialogResolve=null,meetingCommitPending=false;
 
 function blankRoles(){return Object.fromEntries(ROLE_FIELDS.map(([k])=>[k,'']))}
 function blankMeeting(number=''){
@@ -35,11 +35,19 @@ function demoProject(){
  m.roles={receptionist:'Chin Chi Lai',saa:'Gina Wu',president:'Chin Chi Lai',tme:'Mark Weng',timer:'Alex Ho',ahCounter:'Mandy Lin',varietyMaster:'Darren Lin',topicsmaster:'Darren Lin',ge:'Camila Wu',grammarian:'Steve Huang',evaluatorOfEvaluator:'',evaluatorOfTopicsmaster:''};
  m.speakers=[makeSpeaker({name:'Gina Wu',title:'Do We Really Need Three Meals a Day?',level:'EH L3-2',project:'Inspire your audience',duration:"5'-7'",minutes:8,evaluator:'Steve Huang'}),makeSpeaker({name:'Camila Wu',title:'The Courage to Be Seen',level:'PM Level 5',project:'Prepare to speak professionally',duration:"18'-22'",minutes:23,evaluator:'Kimmy Chang'}),makeSpeaker({name:'Sue Huang',title:'',duration:'',minutes:0,evaluator:''})];
  m.events=['9/29–9/30 SYTC 阿里山民宿 Outing',''];
+ const n=blankMeeting(453);n.date='2026-09-15';n.theme='Learn Together';n.word='momentum';
+ n.roles={receptionist:'Gina Wu',saa:'Alex Ho',president:'Chin Chi Lai',tme:'Camila Wu',timer:'Mandy Lin',ahCounter:'Steve Huang',varietyMaster:'Susan Su',topicsmaster:'Sunia Huang',ge:'Darren Lin',grammarian:'Mark Weng',evaluatorOfEvaluator:'',evaluatorOfTopicsmaster:''};
+ n.speakers=[makeSpeaker({name:'Susan Su',title:'The Next Step',duration:"5\'-7\'",minutes:8,evaluator:'Gina Wu'})];
  const members=['TBA','Alex Ho','Camila Wu','Chin Chi Lai','Darren Lin','Mandy Lin','Gina Wu','Steve Huang','Mark Weng','Susan Su','Sunia Huang','Sue Huang','Watchman Chen','Kimmy Chang'];
- return {id:'demo-project',fileName:'示範資料',members:members.map(name=>({name,active:true})),meetings:[m],baseMeetings:[clone(m)],updatedAt:Date.now()};
+ return {id:'demo-project',fileName:'示範資料',members:members.map(name=>({name,active:true})),meetings:[m,n],baseMeetings:clone([m,n]),updatedAt:Date.now()};
 }
 
 function activeMeeting(){return project.meetings[activeIndex]||project.meetings[0]}
+function meetingNumber(m){const n=Number(m?.number);return Number.isInteger(n)&&n>0?n:Infinity}
+function orderedMeetings(){return [...project.meetings].sort((a,b)=>meetingNumber(a)-meetingNumber(b)||String(a.id).localeCompare(String(b.id)))}
+function meetingByNumber(number){return project.meetings.find(m=>meetingNumber(m)===Number(number))}
+function nextScheduledMeeting(m=activeMeeting()){const n=meetingNumber(m);return orderedMeetings().find(x=>meetingNumber(x)>n)||null}
+function selectFirstMeeting(){const first=orderedMeetings()[0];activeIndex=Math.max(0,project.meetings.findIndex(m=>m.id===first?.id))}
 function snapshot(){return JSON.stringify({project,activeIndex})}
 function restoreSnapshot(raw){const x=JSON.parse(raw);project=x.project;activeIndex=Math.min(x.activeIndex,project.meetings.length-1);renderAll();queueSave()}
 function applyChange(fn){undoStack.push(snapshot());if(undoStack.length>60)undoStack.shift();redoStack=[];fn();project.updatedAt=Date.now();renderAll();queueSave()}
@@ -67,6 +75,7 @@ function personSelected(el){let value=el.value;if(value==='__custom__'){customPe
 function customPerson(path){const value=clean(prompt('輸入姓名：',''));if(!value){renderAll();return}applyChange(()=>{setPerson(activeMeeting(),path,value);if(!project.members.some(x=>x.name.toLowerCase()===value.toLowerCase())&&confirm('要把「'+value+'」加入人員下拉清單嗎？'))project.members.push({name:value,active:true})})}
 
 function fieldInput(label,key,value,type='text',wide=false){return '<div class="field '+(wide?'wide':'')+'"><label>'+esc(label)+'</label><input type="'+type+'" value="'+esc(value)+'" onchange="meetingField(\''+key+'\',this.value)"></div>'}
+function readonlyField(label,value){return '<div class="field"><label>'+esc(label)+'</label><input class="readonly-number" value="'+esc(value)+'" readonly aria-readonly="true"></div>'}
 function eventInput(i,value){return '<div class="field"><label>活動 '+(i+1)+'</label><textarea onchange="eventField('+i+',this.value)">'+esc(value)+'</textarea></div>'}
 function textField(s,key,label){return '<div class="field"><label>'+label+'</label><input value="'+esc(s[key])+'" onchange="speakerField(\''+s.id+'\',\''+key+'\',this.value)"></div>'}
 function numberField(s,key,label){return '<div class="field"><label>'+label+'</label><input type="number" min="0" step="1" value="'+normalMinutes(s[key])+'" onfocus="beginContinuousEdit()" oninput="speakerMinutes(\''+s.id+'\',this.value)" onchange="finishContinuousEdit()"></div>'}
@@ -81,7 +90,7 @@ function renderEditor(){
  const speakers=m.speakers.map((s,i)=>speakerEditor(s,i)).join('')||'<div class="placeholder">目前沒有 Speaker，請按下方按鈕新增。</div>';
  const sessions=m.order.map((id,i)=>'<div class="session-card" data-session-id="'+id+'"><span class="drag-handle">⠿</span><div><b>'+esc(SESSION_META[id]?.[0]||id)+'</b><small>'+esc(SESSION_META[id]?.[1]||'')+'</small></div><small>'+durationFor(m,id)+' 分</small><div class="session-buttons"><button type="button" onclick="moveSession(\''+id+'\',-1)" '+(i===0?'disabled':'')+' aria-label="上移">↑</button><button type="button" onclick="moveSession(\''+id+'\',1)" '+(i===m.order.length-1?'disabled':'')+' aria-label="下移">↓</button></div></div>').join('');
  $('#editorContent').innerHTML='<div class="editor-head"><div><h2>Meeting '+esc(m.number||'未編號')+' 工作安排</h2><p>所有欄位會即時更新下方 Agenda，並自動保存於目前裝置。</p></div><span class="save-state '+(warnings.length?'warn':'')+'">'+(warnings.length?warnings.length+' 項提醒':'資料完整')+'</span></div><div class="editor-grid">'+
- '<section class="card"><h3>場次資料 <small>對應 Excel 基本欄位</small></h3><div class="fields">'+fieldInput('Meeting Number','number',m.number,'number')+fieldInput('日期','date',m.date,'date')+fieldInput('備註／語言','note',m.note)+fieldInput('Meeting Theme','theme',m.theme)+fieldInput('Word of the Day','word',m.word,'text',true)+'</div></section>'+
+ '<section class="card"><h3>場次資料 <small>場次號碼請由左側切換</small></h3><div class="fields">'+readonlyField('Meeting Number',m.number)+fieldInput('日期','date',m.date,'date')+fieldInput('備註／語言','note',m.note)+fieldInput('Meeting Theme','theme',m.theme)+fieldInput('Word of the Day','word',m.word,'text',true)+'</div></section>'+
  '<section class="card"><h3>人員名單 <small>可拖到角色欄位</small></h3><div class="member-tools"><input id="newMemberName" placeholder="輸入新會員或來賓姓名"><button class="btn" type="button" onclick="addMember()">＋新增</button></div><div class="member-pool" id="memberPool">'+members+'</div><p class="member-note">點姓名旁的 ✎ 可改名或停用；停用不會刪除歷史安排。</p></section>'+
  '<section class="card full"><h3>例會角色 <small>下拉選擇、自行輸入或拖曳交換</small></h3><div class="role-grid">'+roles+'</div></section>'+
  '<section class="card full"><h3>Prepared Speeches <small>'+m.speakers.length+' / 5 位</small></h3><div class="speaker-list">'+speakers+'</div><button class="btn btn-primary add-speaker" type="button" onclick="addSpeaker()" '+(m.speakers.length>=5?'disabled':'')+'>＋ 新增 Speaker</button></section>'+
@@ -92,11 +101,6 @@ function renderEditor(){
 
 function meetingField(key,value){
  const m=activeMeeting();
- if(key==='number'){
-  const n=normalMinutes(value);
-  if(project.meetings.some((x,i)=>i!==activeIndex&&Number(x.number)===n)){toast('Meeting Number 不可重複','error');renderAll();return}
-  value=n||'';
- }
  applyChange(()=>m[key]=clean(value));
 }
 function eventField(i,value){applyChange(()=>activeMeeting().events[i]=clean(value))}
@@ -192,10 +196,12 @@ function headerHtml(){
 }
 function futureHtml(m){return '<section class="future"><h4>未來活動</h4><div>1. '+esc(m.events[0]||'')+'</div><div>2. '+esc(m.events[1]||'')+'</div></section>'}
 function upcomingHtml(){
- const next=project.meetings[activeIndex+1]||activeMeeting(),r=next.roles,s=next.speakers;
+ const next=nextScheduledMeeting();
+ if(!next)return '<section class="next-empty">尚未建立下一場預排</section>';
+ const r=next.roles,s=next.speakers,date=next.date||'日期未設定',heading='Meeting '+esc(next.number)+'<small>'+esc(date)+'</small>';
  const left=[['Toastmaster',r.tme],['Receptionist',r.receptionist],['Variety Master',r.varietyMaster],['Topicsmaster',r.topicsmaster],['Speaker #1',s[0]?.name],['Speaker #2',s[1]?.name],['Speaker #3',s[2]?.name]];
  const right=[['General Evaluator',r.ge],['Timer',r.timer],['Ah Counter',r.ahCounter],['Grammarian',r.grammarian],['Evaluator #1',s[0]?.evaluator],['Evaluator #2',s[1]?.evaluator],['Evaluator #3',s[2]?.evaluator]];
- return '<table class="next-roles"><thead><tr><th>Meeting Role</th><th>'+esc(next.date)+'</th><th>Meeting Role</th><th>'+esc(next.date)+'</th></tr></thead><tbody>'+left.map((x,i)=>'<tr><td>'+x[0]+'</td><td>'+esc(x[1]||'')+'</td><td>'+right[i][0]+'</td><td>'+esc(right[i][1]||'')+'</td></tr>').join('')+'</tbody></table>';
+ return '<table class="next-roles"><thead><tr><th>Meeting Role</th><th>'+heading+'</th><th>Meeting Role</th><th>'+heading+'</th></tr></thead><tbody>'+left.map((x,i)=>'<tr><td>'+x[0]+'</td><td>'+esc(x[1]||'')+'</td><td>'+right[i][0]+'</td><td>'+esc(right[i][1]||'')+'</td></tr>').join('')+'</tbody></table>';
 }
 
 function renderPreview(preservePanel=false){
@@ -208,8 +214,10 @@ function renderPreview(preservePanel=false){
  if(!preservePanel)renderTimePanel(m,t);else{const warning=$('.time-warnings');if(warning)warning.innerHTML=overtime>0?'<div>⚠ 預計超時 '+overtime+' 分鐘（結束 '+clock(t.finish)+'）</div>':'';scheduleAlignment()}
 }
 function renderMeetingSelector(){
- $('#meetingSelect').innerHTML=project.meetings.map((m,i)=>'<option value="'+i+'" '+(i===activeIndex?'selected':'')+'>Meeting '+esc(m.number||'未編號')+' · '+esc(m.date||'未填日期')+'</option>').join('');
- $('#prevMeeting').disabled=activeIndex===0;$('#nextMeeting').disabled=activeIndex===project.meetings.length-1;$('#deleteMeeting').disabled=project.meetings.length===1;
+ const ordered=orderedMeetings(),position=ordered.findIndex(m=>m.id===activeMeeting().id);
+ $('#meetingNumberInput').value=activeMeeting().number||'';
+ $('#meetingNumberList').innerHTML=ordered.map(m=>'<option value="'+esc(m.number)+'">Meeting '+esc(m.number)+' · '+esc(m.date||'未填日期')+'</option>').join('');
+ $('#prevMeeting').disabled=position<=0;$('#nextMeeting').disabled=position<0||position===ordered.length-1;$('#deleteMeeting').disabled=project.meetings.length===1;
  $('#fileName').textContent=project.fileName||'工作安排';
 }
 
@@ -246,6 +254,25 @@ function dateText(v){
  if(!v)return'';if(v instanceof Date)return v.getFullYear()+'-'+String(v.getMonth()+1).padStart(2,'0')+'-'+String(v.getDate()).padStart(2,'0');
  if(typeof v==='number'){const d=XLSX.SSF.parse_date_code(v);return d?d.y+'-'+String(d.m).padStart(2,'0')+'-'+String(d.d).padStart(2,'0'):String(v)}
  const s=clean(v).replace(/\//g,'-'),d=new Date(s);return Number.isNaN(d.valueOf())?s:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function parseLocalDate(value){
+ const match=clean(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);if(!match)return null;
+ const d=new Date(Number(match[1]),Number(match[2])-1,Number(match[3]),12);return Number.isNaN(d.valueOf())?null:d;
+}
+function formatLocalDate(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function isClubMeetingDate(d){return d.getDay()===2&&(Math.ceil(d.getDate()/7)===1||Math.ceil(d.getDate()/7)===3)}
+function stepClubMeetingDate(date,direction){
+ const d=new Date(date);do d.setDate(d.getDate()+direction);while(!isClubMeetingDate(d));return d;
+}
+function inferredMeetingDate(number){
+ const dated=project.meetings.map(m=>({number:meetingNumber(m),date:parseLocalDate(m.date)})).filter(x=>Number.isFinite(x.number)&&x.date);
+ const lower=dated.filter(x=>x.number<number).sort((a,b)=>b.number-a.number)[0];
+ const higher=dated.filter(x=>x.number>number).sort((a,b)=>a.number-b.number)[0];
+ const source=lower||higher;if(!source)return'';
+ let d=new Date(source.date),steps=Math.abs(number-source.number),direction=lower?1:-1;
+ if(steps>5000)return'';
+ while(steps--)d=stepClubMeetingDate(d,direction);
+ return formatLocalDate(d);
 }
 function normalizeMeeting(m){
  m.id=m.id||uid();m.roles={...blankRoles(),...(m.roles||{})};m.events=[...(m.events||[]),'',''].slice(0,2);m.order=(m.order||[]).filter(x=>DEFAULT_ORDER.includes(x));
@@ -300,28 +327,34 @@ async function importFile(file){
  try{
   const buffer=await file.arrayBuffer(),id=await fingerprint(buffer),parsed=parseWorkbook(buffer,file.name,id),saved=await dbGet(id);
   if(saved&&await confirmAction('找到本機進度','這份 Excel 曾經編排過。按「確定」恢復本機進度；按「取消」則以 Excel 內容重新開始。'))project=saved;else project=parsed;
-  activeIndex=0;undoStack=[];redoStack=[];project.fileName=file.name;renderAll();queueSave();toast('已載入 '+project.meetings.length+' 個場次');
+  selectFirstMeeting();undoStack=[];redoStack=[];project.fileName=file.name;renderAll();queueSave();toast('已載入 '+project.meetings.length+' 個場次');
  }catch(err){toast(err.message||'Excel 讀取失敗','error')}
 }
 async function loadResume(){
  try{const id=localStorage.getItem('sytc-agenda-latest');if(!id)return;pendingRestore=await dbGet(id);if(pendingRestore)$('#resumeBtn').classList.remove('hidden')}catch{}
 }
-function resumeLast(){if(!pendingRestore)return;project=pendingRestore;activeIndex=0;undoStack=[];redoStack=[];$('#resumeBtn').classList.add('hidden');renderAll();toast('已恢復上次編排')}
+function resumeLast(){if(!pendingRestore)return;project=pendingRestore;selectFirstMeeting();undoStack=[];redoStack=[];$('#resumeBtn').classList.add('hidden');renderAll();toast('已恢復上次編排')}
 
 function nextMeetingNumber(){return Math.max(0,...project.meetings.map(x=>Number(x.number)||0))+1}
-function addMeeting(){applyChange(()=>{const m=blankMeeting(nextMeetingNumber());project.meetings.push(m);activeIndex=project.meetings.length-1})}
+function createMeeting(number,source=null){
+ const m=blankMeeting(number);m.date=inferredMeetingDate(number);
+ if(source){m.note=source.note;m.order=[...source.order];m.times={...source.times}}
+ project.meetings.push(m);activeIndex=project.meetings.length-1;return m;
+}
+function addMeeting(){const number=nextMeetingNumber();applyChange(()=>createMeeting(number));toast('已建立 Meeting '+number)}
 function duplicateMeeting(){
- const source=activeMeeting();
- applyChange(()=>{const m=blankMeeting(nextMeetingNumber());m.note=source.note;m.order=[...source.order];m.times={...source.times};project.meetings.push(m);activeIndex=project.meetings.length-1});
+ const source=activeMeeting(),number=nextMeetingNumber();
+ applyChange(()=>createMeeting(number,source));toast('已建立 Meeting '+number+'，並複製流程與時間設定');
 }
 async function deleteMeeting(){
  if(project.meetings.length===1)return;
  if(!await confirmAction('刪除目前場次','Meeting '+activeMeeting().number+' 將從目前工作安排中刪除。'))return;
- applyChange(()=>{project.meetings.splice(activeIndex,1);activeIndex=Math.min(activeIndex,project.meetings.length-1)});
+ const ordered=orderedMeetings(),position=ordered.findIndex(m=>m.id===activeMeeting().id),fallback=ordered[position+1]||ordered[position-1];
+ applyChange(()=>{project.meetings.splice(activeIndex,1);activeIndex=Math.max(0,project.meetings.findIndex(m=>m.id===fallback?.id))});
 }
 async function resetMeeting(){
  if(!await confirmAction('重設目前場次','目前場次的所有修改將還原為匯入時內容；新增場次則還原成空白。'))return;
- applyChange(()=>{const current=activeMeeting(),base=project.baseMeetings.find(x=>x.id===current.id);project.meetings[activeIndex]=base?clone(base):blankMeeting(current.number)});
+ applyChange(()=>{const current=activeMeeting(),base=project.baseMeetings.find(x=>x.id===current.id);if(base)project.meetings[activeIndex]=clone(base);else{const fresh=blankMeeting(current.number);fresh.date=inferredMeetingDate(Number(current.number));project.meetings[activeIndex]=fresh}});
 }
 function confirmAction(title,message){
  const d=$('#confirmDialog');$('#dialogTitle').textContent=title;$('#dialogMessage').textContent=message;d.showModal();return new Promise(resolve=>dialogResolve=resolve);
@@ -335,7 +368,7 @@ function exportWorkbook(){
  if(typeof XLSX==='undefined'){toast('Excel 元件尚未載入，請重新整理後再試。','error');return}
  const wb=XLSX.utils.book_new(),members=[['身份','姓名','狀態'],...project.members.map(x=>['會員',x.name,x.active?'啟用':'停用'])];
  const memberSheet=XLSX.utils.aoa_to_sheet(members);memberSheet['!cols']=[{wch:12},{wch:24},{wch:10}];XLSX.utils.book_append_sheet(wb,memberSheet,'例會人員名單');
- const ms=project.meetings,assignment=[['','欄位編號→',...ms.map((_,i)=>i+1)],['','Note',...ms.map(m=>m.note)],['','Meeting number',...ms.map(m=>Number(m.number)||'')]];
+ const ms=orderedMeetings(),assignment=[['','欄位編號→',...ms.map((_,i)=>i+1)],['','Note',...ms.map(m=>m.note)],['','Meeting number',...ms.map(m=>Number(m.number)||'')]];
  const add=(label,getter)=>assignment.push([assignment.length-2,label,...ms.map(getter)]);
  add('Date',m=>m.date?new Date(m.date+'T00:00:00'):'');add('Meeting Theme',m=>m.theme);add('Word of the Day',m=>m.word);
  add('Receptionist',m=>m.roles.receptionist);add('SAA',m=>m.roles.saa);add('President',m=>m.roles.president);add('TME',m=>m.roles.tme);add('Timer',m=>m.roles.timer);add('Ah Counter',m=>m.roles.ahCounter);
@@ -350,10 +383,25 @@ function exportWorkbook(){
 }
 
 function switchMeeting(index){activeIndex=Math.max(0,Math.min(project.meetings.length-1,index));undoStack=[];redoStack=[];renderAll()}
+function switchMeetingRecord(meeting){const index=project.meetings.findIndex(m=>m.id===meeting?.id);if(index>=0)switchMeeting(index)}
+function adjacentMeeting(direction){
+ const ordered=orderedMeetings(),position=ordered.findIndex(m=>m.id===activeMeeting().id),meeting=ordered[position+direction];if(meeting)switchMeetingRecord(meeting);
+}
+async function commitMeetingNumber(){
+ if(meetingCommitPending)return;
+ const input=$('#meetingNumberInput'),raw=clean(input.value),number=Number(raw);
+ if(!/^\d+$/.test(raw)||!Number.isInteger(number)||number<=0){toast('請輸入大於 0 的完整場次號碼','error');input.value=activeMeeting().number||'';return}
+ const existing=meetingByNumber(number);if(existing){switchMeetingRecord(existing);return}
+ meetingCommitPending=true;
+ try{
+  if(!await confirmAction('建立新場次','Excel 中沒有 Meeting '+number+'。要建立這個場次的空白編排嗎？')){input.value=activeMeeting().number||'';return}
+  applyChange(()=>createMeeting(number));toast('已建立 Meeting '+number+(activeMeeting().date?'，日期 '+activeMeeting().date:'；請設定日期'));
+ }finally{meetingCommitPending=false}
+}
 function bindUi(){
  $('#uploadBtn').onclick=()=>$('#fileInput').click();$('#fileInput').onchange=e=>{const f=e.target.files[0];if(f)importFile(f);e.target.value=''};
- $('#resumeBtn').onclick=resumeLast;$('#meetingSelect').onchange=e=>switchMeeting(Number(e.target.value));
- $('#prevMeeting').onclick=()=>switchMeeting(activeIndex-1);$('#nextMeeting').onclick=()=>switchMeeting(activeIndex+1);
+ $('#resumeBtn').onclick=resumeLast;$('#goMeeting').onclick=commitMeetingNumber;$('#meetingNumberInput').onchange=commitMeetingNumber;$('#meetingNumberInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();commitMeetingNumber()}};
+ $('#prevMeeting').onclick=()=>adjacentMeeting(-1);$('#nextMeeting').onclick=()=>adjacentMeeting(1);
  $('#addMeeting').onclick=addMeeting;$('#duplicateMeeting').onclick=duplicateMeeting;$('#deleteMeeting').onclick=deleteMeeting;$('#resetMeeting').onclick=resetMeeting;
  $('#exportBtn').onclick=exportWorkbook;$('#printBtn').onclick=()=>window.print();$('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;
  $('#dialogCancel').onclick=()=>closeDialog(false);$('#dialogConfirm').onclick=()=>closeDialog(true);$('#confirmDialog').addEventListener('cancel',e=>{e.preventDefault();closeDialog(false)});
