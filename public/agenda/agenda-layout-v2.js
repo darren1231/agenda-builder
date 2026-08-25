@@ -10,7 +10,7 @@ const KIND_LABELS={role:'一般角色',speechGroup:'Prepared Speeches',keynote:'
 const ROLE_FIELDS=[['receptionist','Receptionist'],['saa','SAA'],['president','President'],['tme','Toastmaster'],['timer','Timer'],['ahCounter','Ah Counter'],['varietyMaster','Variety Master'],['topicsmaster','Topicsmaster'],['ge','General Evaluator'],['grammarian','Grammarian'],['evaluatorOfEvaluator','Evaluator of Evaluator'],['evaluatorOfTopicsmaster','Evaluator of Topicsmaster']];
 const ROLE_LABELS=Object.fromEntries(ROLE_FIELDS);
 const DB_NAME='sytc-agenda-builder',STORE='projects',LAST_KEY='sytc-agenda-last-project-v2';
-let project,activeIndex=0,undoStack=[],redoStack=[],pendingRestore=null,saveTimer=null,resizeObserver=null,dialogResolve=null,meetingCommitPending=false;
+let project,activeIndex=0,undoStack=[],redoStack=[],pendingRestore=null,saveTimer=null,toastTimer=null,resizeObserver=null,dialogResolve=null,meetingCommitPending=false,sourceWorkbookBytes=null;
 
 function blankRoles(){return Object.fromEntries(ROLE_FIELDS.map(([k])=>[k,'']))}
 function defaultHeader(template='regular'){const joint=template==='joint';return {customized:false,title:joint?'SYTC & CYBTC JOINT MEETING':'SHIN YING TOASTMASTERS CLUB',subtitle:joint?'Joint Meeting':'Since 2006　|　Club No. 974403　|　Area 4　|　Division H',schedule:'Regular Meeting: 7–9pm, 1st & 3rd Tuesday of every month',venue:'新營天居五樓會議室（新營區中山路）',online:'Zoom ID: 8911 1386 086　Password :907992',motto:'Learn Together; Empower Each Other.',mission:'We provide a supportive and positive learning experience in which members are empowered to develop communication and leadership skills.',logoAssetId:''}}
@@ -187,6 +187,31 @@ function parseWorkbookV2(buffer,fileName,id){
  return normalizeProject({id,fileName,members,meetings,baseMeetings:clone(meetings),assets:readAssets(wb),updatedAt:Date.now()});
 }
 
+const EXCEL_FIELD_LABELS={note:'Note',date:'日期',theme:'Meeting Theme',word:'Word of the Day',receptionist:'Receptionist',tme:'TME',timer:'Timer',ahCounter:'Ah Counter',varietyMaster:'Variety Master',topicsmaster:'Topicsmaster',ge:'GE',grammarian:'Grammarian',evaluatorOfEvaluator:'Evaluator of Evaluator',evaluatorOfTopicsmaster:'Evaluator of Topicsmaster',event1:'Upcoming Event 1',event2:'Upcoming Event 2'};
+function excelShape(m){const out={note:clean(m.note),date:dateText(m.date),theme:clean(m.theme),word:clean(m.word),receptionist:clean(m.roles.receptionist),tme:clean(m.roles.tme),timer:clean(m.roles.timer),ahCounter:clean(m.roles.ahCounter),varietyMaster:clean(m.roles.varietyMaster),topicsmaster:clean(m.roles.topicsmaster),ge:clean(m.roles.ge),grammarian:clean(m.roles.grammarian)};for(let i=0;i<5;i++){const s=m.speakers[i]||{};out[`speaker${i+1}`]=clean(s.name);out[`title${i+1}`]=clean(s.title);out[`level${i+1}`]=clean(s.level);out[`project${i+1}`]=clean(s.project);out[`duration${i+1}`]=clean(s.duration);out[`evaluator${i+1}`]=clean(s.evaluator)}out.evaluatorOfEvaluator=clean(m.roles.evaluatorOfEvaluator);out.evaluatorOfTopicsmaster=clean(m.roles.evaluatorOfTopicsmaster);out.event1=clean(m.events[0]);out.event2=clean(m.events[1]);return out}
+function excelFieldLabel(key){const m=key.match(/^(speaker|title|level|project|duration|evaluator)(\d)$/);if(m){const names={speaker:'Speaker',title:'Title',level:'Level',project:'Project',duration:'Time',evaluator:'Evaluator'};return `#${m[2]} ${names[m[1]]}`}return EXCEL_FIELD_LABELS[key]||key}
+function captureExcelBaseline(p){return Object.fromEntries(p.meetings.map(m=>[String(m.number),excelShape(m)]))}
+function excelDiffs(p=project){const baseline=p.excelBaseline||{},out=[];for(const m of p.meetings){const current=excelShape(m),before=baseline[String(m.number)],changes=[];for(const [key,value] of Object.entries(current)){const old=clean(before?.[key]);if(clean(value)!==old)changes.push({key,label:excelFieldLabel(key),before:old,after:clean(value)})}if(changes.length)out.push({meeting:m,number:m.number,isNew:!before,changes})}return out.sort((a,b)=>Number(a.number)-Number(b.number))}
+function sourceFileKey(name){return clean(name).replace(/_已更新(?=\.xls[xm]?$)/i,'').toLowerCase()}
+function mergeNewestExcel(fresh,old){fresh.excelBaseline=captureExcelBaseline(fresh);fresh.sourceFileName=fresh.fileName;if(!old?.excelBaseline||sourceFileKey(old.sourceFileName||old.fileName)!==sourceFileKey(fresh.fileName))return fresh;const dirty=new Set(excelDiffs(old).map(x=>String(x.number))),oldBy=Object.fromEntries(old.meetings.map(m=>[String(m.number),m]));fresh.meetings=fresh.meetings.map(m=>dirty.has(String(m.number))&&oldBy[String(m.number)]?clone(oldBy[String(m.number)]):m);for(const n of dirty)if(!fresh.meetings.some(m=>String(m.number)===n)&&oldBy[n])fresh.meetings.push(clone(oldBy[n]));const memberMap=new Map([...fresh.members,...old.members].map(x=>[x.name.toLowerCase(),x]));fresh.members=[...memberMap.values()];fresh.assets={...fresh.assets,...(old.assets||{})};return normalizeProject(fresh)}
+
+function colNumber(name){let n=0;for(const c of name)n=n*26+c.charCodeAt(0)-64;return n}
+function colName(n){let s='';while(n){n--;s=String.fromCharCode(65+n%26)+s;n=Math.floor(n/26)}return s}
+function excelSerial(value){const d=parseLocalDate(value);return d?Math.round((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())-Date.UTC(1899,11,30))/86400000):''}
+function xmlDoc(text){return new DOMParser().parseFromString(text,'application/xml')}
+function xmlText(doc){return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+new XMLSerializer().serializeToString(doc.documentElement)}
+function directChild(el,name){return [...(el?.children||[])].find(x=>x.localName===name)}
+function rowElement(doc,rowNumber){const data=[...doc.getElementsByTagNameNS('*','sheetData')][0];let row=[...data.children].find(x=>x.localName==='row'&&Number(x.getAttribute('r'))===rowNumber);if(row)return row;row=doc.createElementNS(data.namespaceURI,'row');row.setAttribute('r',rowNumber);const next=[...data.children].find(x=>Number(x.getAttribute('r'))>rowNumber);data.insertBefore(row,next||null);return row}
+function cellElement(doc,row,col,styleSource=''){const rowEl=rowElement(doc,row),ref=col+row;let cell=[...rowEl.children].find(x=>x.localName==='c'&&x.getAttribute('r')===ref);if(cell)return cell;cell=doc.createElementNS(rowEl.namespaceURI,'c');cell.setAttribute('r',ref);if(styleSource){const source=[...rowEl.children].find(x=>x.localName==='c'&&x.getAttribute('r')===styleSource+row),style=source?.getAttribute('s');if(style!=null)cell.setAttribute('s',style)}const target=colNumber(col),next=[...rowEl.children].find(x=>colNumber((x.getAttribute('r')||'').replace(/\d/g,''))>target);rowEl.insertBefore(cell,next||null);return cell}
+function cellRawValue(doc,row,col){const rowEl=rowElement(doc,row),cell=[...rowEl.children].find(x=>x.localName==='c'&&x.getAttribute('r')===col+row);return clean(directChild(cell||{},'v')?.textContent||directChild(directChild(cell||{},'is')||{},'t')?.textContent)}
+function setXmlCell(doc,row,col,value,type='string',styleSource=''){const cell=cellElement(doc,row,col,styleSource),style=cell.getAttribute('s');while(cell.firstChild)cell.removeChild(cell.firstChild);[...cell.attributes].forEach(a=>cell.removeAttribute(a.name));cell.setAttribute('r',col+row);if(style!=null)cell.setAttribute('s',style);if(value===''||value==null)return;if(type==='number'){const v=doc.createElementNS(cell.namespaceURI,'v');v.textContent=String(value);cell.appendChild(v);return}cell.setAttribute('t','inlineStr');const is=doc.createElementNS(cell.namespaceURI,'is'),t=doc.createElementNS(cell.namespaceURI,'t');if(/^\s|\s$/.test(String(value)))t.setAttributeNS('http://www.w3.org/XML/1998/namespace','xml:space','preserve');t.textContent=String(value);is.appendChild(t);cell.appendChild(is)}
+function meetingColumn(doc,number){const row=rowElement(doc,3);for(const cell of row.children){if(cell.localName!=='c')continue;const v=Number(directChild(cell,'v')?.textContent);if(v===Number(number)&&v>=100)return (cell.getAttribute('r')||'').replace(/\d/g,'')}return''}
+function newMeetingColumn(doc){const row=rowElement(doc,3),used=[...row.children].map(c=>({col:(c.getAttribute('r')||'').replace(/\d/g,''),value:Number(directChild(c,'v')?.textContent)})).filter(x=>x.value>=100),source=used.sort((a,b)=>a.value-b.value).at(-1)?.col||'C',start=colNumber(source)+1;for(let n=start;n<=702;n++){const col=colName(n),meeting=Number(cellRawValue(doc,3,col));if(meeting>=100)continue;let occupied=false;for(let r=5;r<=48;r++)if(cellRawValue(doc,r,col)){occupied=true;break}if(!occupied)return{col,source}}throw Error('找不到可安全新增 Meeting 的空白欄位')}
+function writeMeetingColumn(doc,m,col,styleSource){const s=excelShape(m),rows={note:2,date:4,theme:5,word:6,receptionist:7,tme:8,timer:9,ahCounter:10,varietyMaster:11,topicsmaster:12,ge:13,grammarian:14,evaluatorOfEvaluator:45,evaluatorOfTopicsmaster:46,event1:47,event2:48};setXmlCell(doc,3,col,m.number,'number',styleSource);for(const [key,row] of Object.entries(rows))setXmlCell(doc,row,col,key==='date'?excelSerial(s[key]):s[key],key==='date'?'number':'string',styleSource);for(let i=0;i<5;i++){const base=15+i*6;setXmlCell(doc,base,col,s[`speaker${i+1}`],'string',styleSource);setXmlCell(doc,base+1,col,s[`title${i+1}`],'string',styleSource);setXmlCell(doc,base+2,col,s[`level${i+1}`],'string',styleSource);setXmlCell(doc,base+3,col,s[`project${i+1}`],'string',styleSource);setXmlCell(doc,base+4,col,s[`duration${i+1}`],'string',styleSource);setXmlCell(doc,base+5,col,s[`evaluator${i+1}`],'string',styleSource)}}
+async function patchOriginalWorkbook(diffs){if(!sourceWorkbookBytes)throw Error('請先上傳原始 Excel');if(typeof JSZip==='undefined')throw Error('Excel 更新元件尚未載入，請重新整理後再試');const zip=await JSZip.loadAsync(sourceWorkbookBytes),wbDoc=xmlDoc(await zip.file('xl/workbook.xml').async('string')),sheet=[...wbDoc.getElementsByTagNameNS('*','sheet')].find(x=>x.getAttribute('name')==='Assignment for Agenda(工作安排)'||x.getAttribute('name').toLowerCase().includes('assignment for agenda'));if(!sheet)throw Error('找不到 Assignment for Agenda 工作表');const rid=sheet.getAttribute('r:id')||sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id'),rels=xmlDoc(await zip.file('xl/_rels/workbook.xml.rels').async('string')),rel=[...rels.getElementsByTagNameNS('*','Relationship')].find(x=>x.getAttribute('Id')===rid),target=rel?.getAttribute('Target');if(!target)throw Error('無法定位工作安排工作表');const path=target.startsWith('/')?target.slice(1):'xl/'+target.replace(/^\.\//,''),wsFile=zip.file(path);if(!wsFile)throw Error('工作安排工作表內容遺失');const doc=xmlDoc(await wsFile.async('string'));for(const item of diffs){let col=meetingColumn(doc,item.number),source=col;if(!col){const next=newMeetingColumn(doc);col=next.col;source=next.source;const prevIndex=Number(cellRawValue(doc,1,source))||colNumber(source)-2;setXmlCell(doc,1,col,prevIndex+1,'number',source)}writeMeetingColumn(doc,item.meeting,col,source)}zip.file(path,xmlText(doc));return zip.generateAsync({type:'arraybuffer',compression:'DEFLATE',compressionOptions:{level:6}})}
+function diffSummary(diffs){const lines=['將更新原始 Excel 的以下資料：',''];for(const d of diffs){lines.push(`Meeting ${d.number}${d.isNew?'（新增欄位）':''}`);for(const c of d.changes)lines.push(`• ${c.label}: ${c.before||'（空白）'} → ${c.after||'（清空）'}`);lines.push('')}lines.push('只會修改 Assignment for Agenda 的相關欄位，Excel 內的 Agenda 工作表不會變動。');return lines.join('\n')}
+async function exportOriginalWorkbook(){try{const diffs=excelDiffs();if(!diffs.length){toast('目前沒有需要寫回 Excel 的修改');return}if(!sourceWorkbookBytes){toast('示範資料無法寫回，請先上傳原始 Excel',true);return}if(!await confirmAction('確認更新原始 Excel',diffSummary(diffs)))return;const output=await patchOriginalWorkbook(diffs);sourceWorkbookBytes=output;project.excelBaseline={...(project.excelBaseline||{})};for(const d of diffs)project.excelBaseline[String(d.number)]=excelShape(d.meeting);const blob=new Blob([output],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=(project.fileName||'SYTC Agenda_Assignment.xlsx').replace(/\.xls[xm]?$/i,'')+'_已更新.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);queueSave();toast(`已更新 ${diffs.length} 個 Meeting 欄位`)}catch(e){console.error(e);toast(e.message||'Excel 更新失敗',true)}}
+
 function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,1);req.onupgradeneeded=()=>req.result.createObjectStore(STORE,{keyPath:'id'});req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
 async function dbPut(value){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(value);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)})}
 async function dbGet(id){const db=await openDb();return new Promise((resolve,reject)=>{const req=db.transaction(STORE).objectStore(STORE).get(id);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
@@ -194,6 +219,45 @@ function queueSave(){clearTimeout(saveTimer);saveTimer=setTimeout(async()=>{try{
 async function fingerprint(file){const data=await file.arrayBuffer(),hash=await crypto.subtle.digest('SHA-256',data);return{id:[...new Uint8Array(hash)].map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,24),data}}
 async function importFile(file){if(!file)return;try{const {id,data}=await fingerprint(file),fresh=parseWorkbook(data,file.name,id);const saved=await dbGet(id);project=saved?.project?normalizeProject(saved.project):fresh;if(!project.baseMeetings?.length)project.baseMeetings=clone(fresh.meetings);activeIndex=0;undoStack=[];redoStack=[];localStorage.setItem(LAST_KEY,id);await dbPut({id,fileName:file.name,updatedAt:Date.now(),project});renderAll();toast(saved?'已載入上次編排進度':'Excel 已匯入，可開始編排')}catch(e){console.error(e);toast(e.message||'Excel 匯入失敗',true)}finally{$('#excelFile').value=''}}
 async function resumeLast(){try{const id=localStorage.getItem(LAST_KEY);if(!id)return false;const saved=await dbGet(id);if(!saved?.project)return false;project=normalizeProject(saved.project);activeIndex=0;renderAll();toast('已恢復上次編排進度');return true}catch{return false}}
+
+function queueSaveV3(){clearTimeout(saveTimer);saveTimer=setTimeout(async()=>{try{await dbPut({id:project.id,fileName:project.fileName,updatedAt:Date.now(),project,sourceWorkbookBytes});localStorage.setItem(LAST_KEY,project.id)}catch(e){console.warn('save failed',e)}},250)}
+async function importFileV3(file){
+ if(!file)return;
+ const previousNumber=activeMeeting()?.number;
+ try{
+  const {id,data}=await fingerprint(file),fresh=parseWorkbookV2(data,file.name,id),saved=await dbGet(id);
+  fresh.excelBaseline=captureExcelBaseline(fresh);fresh.sourceFileName=file.name;
+  if(saved?.project){
+   project=normalizeProject(saved.project);
+   sourceWorkbookBytes=saved.sourceWorkbookBytes||data.slice(0);
+   if(!project.excelBaseline)project.excelBaseline=captureExcelBaseline(fresh);
+   project.sourceFileName=file.name;
+  }else{
+   project=mergeNewestExcel(fresh,project);
+   sourceWorkbookBytes=data.slice(0);
+  }
+  project.id=id;project.fileName=file.name;
+  if(!project.baseMeetings?.length)project.baseMeetings=clone(fresh.meetings);
+  const wanted=project.meetings.findIndex(m=>String(m.number)===String(previousNumber));
+  activeIndex=wanted>=0?wanted:0;undoStack=[];redoStack=[];
+  localStorage.setItem(LAST_KEY,id);
+  await dbPut({id,fileName:file.name,updatedAt:Date.now(),project,sourceWorkbookBytes});
+  renderAll();
+  toast(saved?'已載入這份 Excel 的上次編排進度':'Excel 已合併：保留已修改場次，其餘已更新');
+ }catch(e){console.error(e);toast(e.message||'Excel 匯入失敗',true)}finally{$('#excelFile').value=''}
+}
+async function resumeLastV3(){try{const id=localStorage.getItem(LAST_KEY);if(!id)return false;const saved=await dbGet(id);if(!saved?.project)return false;project=normalizeProject(saved.project);sourceWorkbookBytes=saved.sourceWorkbookBytes||null;activeIndex=0;renderAll();toast('已恢復上次編排進度');return true}catch{return false}}
+
+function preparePrintScale(){
+ const sheet=$('#sheet');if(!sheet)return;
+ document.body.classList.add('printing');
+ const probe=document.createElement('div');probe.style.cssText='position:fixed;left:-10000px;top:0;width:194mm;height:281mm;visibility:hidden;pointer-events:none';document.body.appendChild(probe);
+ const availableWidth=probe.offsetWidth,availableHeight=probe.offsetHeight;probe.remove();
+ const scale=Math.min(1,availableWidth/sheet.scrollWidth,availableHeight/sheet.scrollHeight);
+ sheet.style.setProperty('--print-scale',String(Math.max(.1,scale)));
+}
+function clearPrintScale(){document.body.classList.remove('printing');$('#sheet')?.style.removeProperty('--print-scale')}
+function printAgenda(){preparePrintScale();requestAnimationFrame(()=>window.print())}
 
 function cloneLayout(source,number,date){const m=blankMeeting(number,date);m.templateId=source.templateId;m.header=clone(source.header);m.sessions=clone(source.sessions);const idMap={};m.sessions.forEach(s=>{const old=s.id;s.id=uid('ses');idMap[old]=s.id;s.subrows.forEach(r=>r.id=uid('sub'))});m.speakers=[];normalizeMeeting(m);return m}
 function createMeeting(source=null){const current=activeMeeting(),number=Math.max(...project.meetings.map(m=>Number(m.number)||0),current.number||0)+1,date=inferredMeetingDate(number)||stepClubMeetingDate(current.date||formatLocalDate(new Date()));applyChange(()=>{const m=source?cloneLayout(source,number,date):blankMeeting(number,date);project.meetings.push(m);activeIndex=project.meetings.length-1})}
@@ -210,8 +274,14 @@ function commitMeetingNumber(){const value=Math.max(1,Math.round(Number($('#meet
 function bindUi(){$('#excelFile').addEventListener('change',e=>importFile(e.target.files[0]));$('#importTrigger').onclick=()=>$('#excelFile').click();$('#resumeBtn').onclick=resumeLast;$('#exportBtn').onclick=exportWorkbook;$('#printBtn').onclick=()=>window.print();$('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;$('#prevMeeting').onclick=()=>switchMeeting(-1);$('#nextMeeting').onclick=()=>switchMeeting(1);$('#meetingNumberInput').onchange=commitMeetingNumber;$('#meetingNumberInput').onkeydown=e=>{if(e.key==='Enter')commitMeetingNumber()};$('#addMeeting').onclick=()=>createMeeting();$('#duplicateMeeting').onclick=()=>createMeeting(activeMeeting());$('#deleteMeeting').onclick=deleteCurrentMeeting;$('#resetMeeting').onclick=resetCurrentMeeting;window.addEventListener('resize',scheduleAlignment);window.addEventListener('beforeprint',()=>document.body.classList.add('printing'));window.addEventListener('afterprint',()=>document.body.classList.remove('printing'))}
 function exportWorkbookV2(){const members=project.members;project.members=members.filter(x=>x.active).map(x=>x.name);try{exportWorkbook()}finally{project.members=members}}
 parseWorkbook=parseWorkbookV2;
+queueSave=queueSaveV3;
+importFile=importFileV3;
+resumeLast=resumeLastV3;
 async function bootstrap(){bindUi();if(!await resumeLast()){project=demoProject();renderAll()}document.fonts?.ready.then(scheduleAlignment)}
 bootstrap();
-$('#exportBtn').onclick=exportWorkbookV2;
+$('#exportBtn').onclick=exportOriginalWorkbook;
+$('#printBtn').onclick=printAgenda;
+window.addEventListener('beforeprint',preparePrintScale);
+window.addEventListener('afterprint',clearPrintScale);
 $('#goMeeting').onclick=commitMeetingNumber;
 $$('.tab').forEach(tab=>tab.onclick=()=>{const target=tab.dataset.target;$$('.tab').forEach(x=>x.classList.toggle('active',x===tab));if(target==='preview')$('#preview').scrollIntoView({behavior:'smooth'});else $('#editor').scrollIntoView({behavior:'smooth'})});
