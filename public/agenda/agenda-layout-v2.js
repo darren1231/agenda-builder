@@ -142,7 +142,7 @@ function renderMeetingSelector(){const ordered=orderedMeetings(),position=ordere
 function controlInput(session,label,value,target,key='duration'){return '<label class="time-control" data-control-target="'+esc(target)+'"><b>'+esc(label)+'</b><input type="number" min="0" step="1" value="'+normalMinutes(value)+'" oninput="setSessionMinutes(\''+session.id+'\',this.value,\''+key+'\')"></label>'}
 function renderTimePanel(m,t){let controls='';for(const s of m.sessions.filter(x=>x.visible)){if(['speechGroup','keynote'].includes(s.kind)){controls+=speakersFor(m,s.id).map((p,i)=>'<label class="time-control" data-control-target="speaker:'+p.id+'"><b>'+(s.kind==='keynote'?'Keynote':('演講者 '+(i+1)))+'</b><input type="number" min="0" step="1" value="'+normalMinutes(p.minutes)+'" oninput="speakerMinutes(\''+p.id+'\',this.value)"></label>').join('');continue}if(s.legacyKey==='evaluation'){controls+=controlInput(s,'GE 開場',s.openMinutes,s.id,'openMinutes')+controlInput(s,'個別講評',s.individualMinutes,'evaluation:'+s.id,'individualMinutes');continue}if(s.legacyKey==='adjourn')continue;controls+=controlInput(s,s.title,s.duration,s.id);for(const r of s.subrows.filter(x=>x.countsTime))controls+='<label class="time-control" data-control-target="subrow:'+r.id+'"><b>'+esc(r.title)+'</b><input type="number" min="0" step="1" value="'+r.duration+'" onchange="subrowField(\''+s.id+'\',\''+r.id+'\',\'duration\',this.value)"></label>'}const overtime=t.finish-540;$('#timePanel').style.height=$('#sheet').offsetHeight+'px';$('#timePanel').innerHTML='<details open><summary>時間控制器 <small>分鐘</small></summary><div class="start-anchor"><b>固定起點</b><strong>6:45</strong></div><div class="time-help">自由增減或拖曳 Session，後續時間立即重算</div>'+controls+'<div class="time-warnings">'+(overtime>0?'<div>⚠ 預計超時 '+overtime+' 分鐘（結束 '+clock(t.finish)+'）</div>':'')+'</div></details>';observeAlignment()}
 function observeAlignment(){resizeObserver?.disconnect();if(window.ResizeObserver){resizeObserver=new ResizeObserver(scheduleAlignment);resizeObserver.observe($('#sheet'))}scheduleAlignment()}
-function scheduleAlignment(){requestAnimationFrame(syncAlignment)}
+function scheduleAlignment(){requestAnimationFrame(()=>{syncAlignment();renderMarginNote()})}
 function syncAlignment(){const sheet=$('#sheet'),panel=$('#timePanel');if(!sheet||!panel)return;panel.style.height=sheet.offsetHeight+'px';const sr=sheet.getBoundingClientRect();$$('.time-control').forEach(c=>{const target=[...sheet.querySelectorAll('[data-session]')].find(x=>x.dataset.session===c.dataset.controlTarget);if(!target)return;const tr=target.getBoundingClientRect();c.style.top=(tr.top-sr.top-panel.clientTop)+'px';c.style.height=tr.height+'px'})}
 function renderAll(){normalizeProject(project);renderMeetingSelector();renderEditor();renderPreview();$('#undoBtn').disabled=!undoStack.length;$('#redoBtn').disabled=!redoStack.length}
 
@@ -248,10 +248,52 @@ async function importFileV3(file){
 }
 async function resumeLastV3(){try{const id=localStorage.getItem(LAST_KEY);if(!id)return false;const saved=await dbGet(id);if(!saved?.project)return false;project=normalizeProject(saved.project);sourceWorkbookBytes=saved.sourceWorkbookBytes||null;activeIndex=0;renderAll();toast('已恢復上次編排進度');return true}catch{return false}}
 
-function printableArea(){
- const css=getComputedStyle(document.documentElement),width=css.getPropertyValue('--print-page-w').trim()||'186mm',height=css.getPropertyValue('--print-page-h').trim()||'273mm';
- const probe=document.createElement('div');probe.style.cssText='position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none';probe.style.width=width;probe.style.height=height;document.body.appendChild(probe);
- const size={width:probe.offsetWidth,height:probe.offsetHeight};probe.remove();return size;
+const PRINT_MARGIN_KEY='sytc-agenda-print-margin',PAPER={width:210,height:297},DEFAULT_MARGIN={x:12,y:12},MAX_MARGIN=40;
+let printMargin={...DEFAULT_MARGIN},mmRatio=0;
+function mmToPx(mm){if(!mmRatio){const probe=document.createElement('div');probe.style.cssText='position:fixed;left:-10000px;top:0;width:100mm;height:0;visibility:hidden;pointer-events:none';document.body.appendChild(probe);mmRatio=probe.getBoundingClientRect().width/100;probe.remove()}return mm*mmRatio}
+function clampMargin(value,fallback){const n=Number(value);return Number.isFinite(n)?Math.min(MAX_MARGIN,Math.max(0,Math.round(n*2)/2)):fallback}
+function loadPrintMargin(){try{const saved=JSON.parse(localStorage.getItem(PRINT_MARGIN_KEY)||'null');if(saved)printMargin={x:clampMargin(saved.x,DEFAULT_MARGIN.x),y:clampMargin(saved.y,DEFAULT_MARGIN.y)}}catch{}}
+function savePrintMargin(){try{localStorage.setItem(PRINT_MARGIN_KEY,JSON.stringify(printMargin))}catch(e){console.warn('save margin failed',e)}}
+function printableArea(){return{width:mmToPx(PAPER.width-printMargin.x*2),height:mmToPx(PAPER.height-printMargin.y*2)}}
+function applyPrintMargin(){
+ let rule=$('#printPageRule');if(!rule){rule=document.createElement('style');rule.id='printPageRule';document.head.appendChild(rule)}
+ rule.textContent='@media print{@page{size:A4 portrait;margin:'+printMargin.y+'mm '+printMargin.x+'mm}}';
+ const root=document.documentElement.style;
+ root.setProperty('--print-margin',printMargin.y+'mm');
+ root.setProperty('--print-page-w',(PAPER.width-printMargin.x*2)+'mm');
+ root.setProperty('--print-page-h',(PAPER.height-printMargin.y*2)+'mm');
+}
+function printLayout(){
+ const sheet=$('#sheet'),area=printableArea();
+ const sheetWidth=sheet?Math.max(sheet.scrollWidth,sheet.offsetWidth):0,sheetHeight=sheet?Math.max(sheet.scrollHeight,sheet.offsetHeight):0;
+ const scale=sheetWidth&&sheetHeight?Math.max(.1,Math.min(1,area.width/sheetWidth,area.height/sheetHeight)):1;
+ const toMm=area.width?(PAPER.width-printMargin.x*2)/area.width:0;
+ return{area,scale,ready:sheetWidth>0&&sheetHeight>0,side:printMargin.x+(area.width-sheetWidth*scale)*toMm/2,top:printMargin.y,bottom:printMargin.y+(area.height-sheetHeight*scale)*toMm};
+}
+function mmText(value){return (Math.round(value*10)/10).toFixed(1)}
+function renderMarginNote(){
+ const note=$('#marginNote');if(!note)return;
+ const {scale,side,top,bottom,ready}=printLayout(),percent=Math.round(scale*100);
+ const area='A4 210 × 297 mm，可列印區 <b>'+mmText(PAPER.width-printMargin.x*2)+' × '+mmText(PAPER.height-printMargin.y*2)+' mm</b>。';
+ if(!ready){note.innerHTML=area;return}
+ note.innerHTML=area+'<br>議程表縮放 <b>'+percent+'%</b>，實際白邊：左右各 <b>'+mmText(side)+' mm</b>、上 <b>'+mmText(top)+' mm</b>、下 <b>'+mmText(bottom)+' mm</b>。'
+  +(percent<75?'<br><span class="warn">⚠ 縮得較小，字會偏細，建議把邊界調小。</span>':'');
+}
+function setPrintMargin(axis,value){
+ const next=clampMargin(value,printMargin[axis]);
+ if(next===printMargin[axis])return;
+ printMargin[axis]=next;applyPrintMargin();renderMarginNote();savePrintMargin();
+}
+function syncMarginInputs(){$('#marginX').value=printMargin.x;$('#marginY').value=printMargin.y}
+function resetPrintMargin(){printMargin={...DEFAULT_MARGIN};applyPrintMargin();syncMarginInputs();renderMarginNote();savePrintMargin();toast('已回復預設邊界 12 / 12 mm')}
+function bindMarginControls(){
+ loadPrintMargin();applyPrintMargin();syncMarginInputs();renderMarginNote();
+ for(const axis of ['x','y']){
+  const input=$('#margin'+axis.toUpperCase());
+  input.oninput=()=>setPrintMargin(axis,input.value);
+  input.onchange=()=>{setPrintMargin(axis,input.value);syncMarginInputs()};
+ }
+ $('#resetMargin').onclick=resetPrintMargin;
 }
 function preparePrintScale(){
  const sheet=$('#sheet');if(!sheet)return;
@@ -286,6 +328,7 @@ async function bootstrap(){bindUi();if(!await resumeLast()){project=demoProject(
 bootstrap();
 $('#exportBtn').onclick=exportOriginalWorkbook;
 $('#printBtn').onclick=printAgenda;
+bindMarginControls();
 window.addEventListener('beforeprint',preparePrintScale);
 window.addEventListener('afterprint',clearPrintScale);
 $('#goMeeting').onclick=commitMeetingNumber;
