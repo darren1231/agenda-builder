@@ -248,12 +248,17 @@ async function importFileV3(file){
 }
 async function resumeLastV3(){try{const id=localStorage.getItem(LAST_KEY);if(!id)return false;const saved=await dbGet(id);if(!saved?.project)return false;project=normalizeProject(saved.project);sourceWorkbookBytes=saved.sourceWorkbookBytes||null;activeIndex=0;renderAll();toast('已恢復上次編排進度');return true}catch{return false}}
 
+function printableArea(){
+ const css=getComputedStyle(document.documentElement),width=css.getPropertyValue('--print-page-w').trim()||'186mm',height=css.getPropertyValue('--print-page-h').trim()||'273mm';
+ const probe=document.createElement('div');probe.style.cssText='position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none';probe.style.width=width;probe.style.height=height;document.body.appendChild(probe);
+ const size={width:probe.offsetWidth,height:probe.offsetHeight};probe.remove();return size;
+}
 function preparePrintScale(){
  const sheet=$('#sheet');if(!sheet)return;
  document.body.classList.add('printing');
- const probe=document.createElement('div');probe.style.cssText='position:fixed;left:-10000px;top:0;width:194mm;height:281mm;visibility:hidden;pointer-events:none';document.body.appendChild(probe);
- const availableWidth=probe.offsetWidth,availableHeight=probe.offsetHeight;probe.remove();
- const scale=Math.min(1,availableWidth/sheet.scrollWidth,availableHeight/sheet.scrollHeight);
+ sheet.style.removeProperty('--print-scale');
+ const area=printableArea(),sheetWidth=Math.max(sheet.scrollWidth,sheet.offsetWidth),sheetHeight=Math.max(sheet.scrollHeight,sheet.offsetHeight);
+ const scale=Math.min(1,area.width/sheetWidth,area.height/sheetHeight);
  sheet.style.setProperty('--print-scale',String(Math.max(.1,scale)));
 }
 function clearPrintScale(){document.body.classList.remove('printing');$('#sheet')?.style.removeProperty('--print-scale')}
