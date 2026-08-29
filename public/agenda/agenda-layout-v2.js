@@ -227,25 +227,22 @@ async function importFileV3(file){
  if(!file)return;
  const previousNumber=activeMeeting()?.number;
  try{
-  const {id,data}=await fingerprint(file),fresh=parseWorkbookV2(data,file.name,id),saved=await dbGet(id);
+  const {id,data}=await fingerprint(file),fresh=parseWorkbookV2(data,file.name,id);
   fresh.excelBaseline=captureExcelBaseline(fresh);fresh.sourceFileName=file.name;
-  if(saved?.project){
-   project=normalizeProject(saved.project);
-   sourceWorkbookBytes=saved.sourceWorkbookBytes||data.slice(0);
-   if(!project.excelBaseline)project.excelBaseline=captureExcelBaseline(fresh);
-   project.sourceFileName=file.name;
-  }else{
-   project=mergeNewestExcel(fresh,project);
-   sourceWorkbookBytes=data.slice(0);
-  }
+  // An explicit upload is a fresh import. Never mix a previously cached project
+  // into it: the workbook the user just selected is the source of truth.
+  project=fresh;
+  project.excelBaseline=captureExcelBaseline(project);
+  project.sourceFileName=file.name;
+  sourceWorkbookBytes=data.slice(0);
   project.id=id;project.fileName=file.name;
-  if(!project.baseMeetings?.length)project.baseMeetings=clone(fresh.meetings);
+  project.baseMeetings=clone(project.meetings);
   const wanted=project.meetings.findIndex(m=>String(m.number)===String(previousNumber));
   activeIndex=wanted>=0?wanted:0;undoStack=[];redoStack=[];
   localStorage.setItem(LAST_KEY,id);
   await dbPut({id,fileName:file.name,updatedAt:Date.now(),project,sourceWorkbookBytes});
   renderAll();
-  toast(saved?'已載入這份 Excel 的上次編排進度':'Excel 已合併：保留已修改場次，其餘已更新');
+  toast('Excel 已重新讀取；工作安排以本次上傳內容為準');
  }catch(e){console.error(e);toast(e.message||'Excel 匯入失敗',true)}finally{$('#excelFile').value=''}
 }
 async function resumeLastV3(){try{const id=localStorage.getItem(LAST_KEY);if(!id)return false;const saved=await dbGet(id);if(!saved?.project)return false;project=normalizeProject(saved.project);sourceWorkbookBytes=saved.sourceWorkbookBytes||null;activeIndex=0;renderAll();toast('已恢復上次編排進度');return true}catch{return false}}
