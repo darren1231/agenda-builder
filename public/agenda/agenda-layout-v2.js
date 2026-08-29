@@ -253,11 +253,23 @@ function preparePrintScale(){
  document.body.classList.add('printing');
  const probe=document.createElement('div');probe.style.cssText='position:fixed;left:-10000px;top:0;width:194mm;height:281mm;visibility:hidden;pointer-events:none';document.body.appendChild(probe);
  const availableWidth=probe.offsetWidth,availableHeight=probe.offsetHeight;probe.remove();
- const scale=Math.min(1,availableWidth/sheet.scrollWidth,availableHeight/sheet.scrollHeight);
+ const contentWidth=Math.max(sheet.scrollWidth,sheet.offsetWidth)+2,contentHeight=Math.max(sheet.scrollHeight,sheet.offsetHeight)+2;
+ const scale=Math.min(1,availableWidth/contentWidth,availableHeight/contentHeight);
  sheet.style.setProperty('--print-scale',String(Math.max(.1,scale)));
 }
 function clearPrintScale(){document.body.classList.remove('printing');$('#sheet')?.style.removeProperty('--print-scale')}
 function printAgenda(){preparePrintScale();requestAnimationFrame(()=>window.print())}
+async function downloadAgendaImage(){
+ const button=$('#imageBtn'),sheet=$('#sheet');
+ try{
+  if(typeof html2canvas==='undefined')throw Error('圖片元件尚未載入，請重新整理後再試');
+  button.disabled=true;button.textContent='圖片產生中…';
+  await Promise.all([...sheet.querySelectorAll('img')].map(img=>img.complete?Promise.resolve():new Promise(resolve=>{img.addEventListener('load',resolve,{once:true});img.addEventListener('error',resolve,{once:true})})));
+  const canvas=await html2canvas(sheet,{backgroundColor:'#ffffff',scale:2,useCORS:true,logging:false,windowWidth:sheet.scrollWidth,windowHeight:sheet.scrollHeight,onclone:doc=>{const cloned=doc.querySelector('#sheet');if(cloned){cloned.style.boxShadow='none';cloned.style.margin='0';cloned.style.border='1px solid #111'}}});
+  const blob=await new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(Error('無法建立圖片檔案')),'image/png'));
+  const url=URL.createObjectURL(blob),a=document.createElement('a'),number=clean(activeMeeting()?.number)||'Agenda';a.href=url;a.download=`Meeting-${number}-Agenda.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);toast('Agenda 圖片已下載');
+ }catch(e){console.error(e);toast(e.message||'圖片下載失敗',true)}finally{button.disabled=false;button.textContent='下載 Agenda 圖片'}
+}
 
 function cloneLayout(source,number,date){const m=blankMeeting(number,date);m.templateId=source.templateId;m.header=clone(source.header);m.sessions=clone(source.sessions);const idMap={};m.sessions.forEach(s=>{const old=s.id;s.id=uid('ses');idMap[old]=s.id;s.subrows.forEach(r=>r.id=uid('sub'))});m.speakers=[];normalizeMeeting(m);return m}
 function createMeeting(source=null){const current=activeMeeting(),number=Math.max(...project.meetings.map(m=>Number(m.number)||0),current.number||0)+1,date=inferredMeetingDate(number)||stepClubMeetingDate(current.date||formatLocalDate(new Date()));applyChange(()=>{const m=source?cloneLayout(source,number,date):blankMeeting(number,date);project.meetings.push(m);activeIndex=project.meetings.length-1})}
@@ -281,6 +293,7 @@ async function bootstrap(){bindUi();if(!await resumeLast()){project=demoProject(
 bootstrap();
 $('#exportBtn').onclick=exportOriginalWorkbook;
 $('#printBtn').onclick=printAgenda;
+$('#imageBtn').onclick=downloadAgendaImage;
 window.addEventListener('beforeprint',preparePrintScale);
 window.addEventListener('afterprint',clearPrintScale);
 $('#goMeeting').onclick=commitMeetingNumber;

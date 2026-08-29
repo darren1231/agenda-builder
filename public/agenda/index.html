@@ -8,6 +8,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <style>
     *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#edf2f5;color:#172630;font-family:Arial,"Noto Sans TC",sans-serif}button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:none!important}
     .app{min-height:100vh;display:grid;grid-template-columns:292px minmax(0,1fr)}
@@ -25,7 +26,7 @@
     @media(max-width:1050px){.editor-grid{grid-template-columns:1fr}.card.full{grid-column:auto}.role-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.speaker-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.speaker-fields .field:nth-child(2){grid-column:auto}}
     @media(max-width:780px){.app{display:block}.sidebar{position:relative;height:auto;padding:16px}.sidebar h1,.intro{display:none}.brand{margin-bottom:10px}.main{overflow:hidden}.topbar{top:0;padding:8px}.editor{padding:12px 9px}.fields,.role-grid,.future-grid,.header-fields,.session-edit-grid{grid-template-columns:1fr}.speaker-fields{grid-template-columns:1fr}.speaker-fields .span2{grid-column:auto}.preview{padding:12px 8px 50px;-webkit-overflow-scrolling:touch}.agenda-stage{flex-direction:column;justify-content:flex-start;min-width:760px}.time-panel{order:-1;position:relative;width:min(100vw - 16px,760px);height:auto!important;min-height:90px;flex-basis:auto}.time-panel details{height:auto}.time-panel .start-anchor,.time-panel .time-help,.time-panel .time-control,.time-panel .time-warnings{position:static}.time-panel .time-control{height:auto!important;min-height:42px}.time-panel input{min-height:38px;font-size:16px}.subrow{grid-template-columns:1fr}.topbar .btn{padding:7px 8px;font-size:11px}.editor-head{align-items:flex-start;flex-direction:column}}
     .dialog #confirmText{white-space:pre-wrap;max-height:55vh;overflow:auto;line-height:1.5}
-    @media print{@page{size:A4 portrait;margin:8mm}html,body{width:194mm;height:281mm;overflow:hidden!important;background:#fff}.sidebar,.topbar,.editor,.preview-head,.time-panel,.toast,.dialog{display:none!important}.app{display:block}.main{overflow:visible}.preview{display:block!important;width:194mm;height:281mm;padding:0;overflow:hidden!important}.agenda-stage{display:block;width:194mm;min-width:0;height:281mm;overflow:hidden}.sheet{width:760px!important;margin:0!important;border:0;box-shadow:none;zoom:var(--print-scale,1);transform-origin:top left;break-inside:avoid;page-break-inside:avoid}.future,.next-roles,.agenda-row,.speech{break-inside:avoid;page-break-inside:avoid}.club{print-color-adjust:exact;-webkit-print-color-adjust:exact}.agenda-row{grid-template-columns:38px 1fr 125px 125px}}
+    @media print{@page{size:A4 portrait;margin:8mm}html,body{width:194mm;height:281mm;overflow:hidden!important;background:#fff}.sidebar,.topbar,.editor,.preview-head,.time-panel,.toast,.dialog{display:none!important}.app{display:block}.main{overflow:visible}.preview{display:block!important;width:194mm;height:281mm;padding:0;overflow:hidden!important}.agenda-stage{display:block;width:194mm;min-width:0;height:281mm;overflow:hidden}.sheet{width:760px!important;margin:0!important;border:1px solid #111!important;box-shadow:none;zoom:var(--print-scale,1);transform-origin:top left;break-inside:avoid;page-break-inside:avoid;print-color-adjust:exact;-webkit-print-color-adjust:exact}.future,.next-roles,.agenda-row,.speech{break-inside:avoid;page-break-inside:avoid}.club{print-color-adjust:exact;-webkit-print-color-adjust:exact}.agenda-row{grid-template-columns:38px 1fr 125px 125px}}
   </style>
   <style>@media(max-width:780px){.time-panel{width:calc(100vw - 16px)}}</style>
 </head>
@@ -50,6 +51,7 @@
     <div class="side-section">
       <button class="btn" id="exportBtn">↓　下載更新後原始 Excel</button>
       <button class="btn" id="printBtn">列印／另存 PDF</button>
+      <button class="btn" id="imageBtn">下載 Agenda 圖片</button>
       <button class="btn btn-danger" id="resetMeeting">重設目前場次</button>
     </div>
     <p class="privacy">資料只儲存在目前瀏覽器，不會上傳到伺服器。</p>
